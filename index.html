@@ -24,6 +24,11 @@
     }
     #slideshow img.show { opacity: 1; }
 
+    /* 저지연 미러링: fMP4 조각을 MediaSource로 직접 받아 그린다 */
+    #mirror { position: fixed; inset: 0; display: none; background: #000; }
+    #mirror.active { display: block; }
+    #mirror video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+
     #idle {
       position: fixed; inset: 0; display: flex;
       flex-direction: column; align-items: center; justify-content: center;
@@ -45,6 +50,7 @@
 
   <cast-media-player></cast-media-player>
   <div id="slideshow"></div>
+  <div id="mirror"><video id="mirrorVideo" autoplay playsinline muted></video></div>
   <div id="status"></div>
 
   <script src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
@@ -75,6 +81,7 @@
     let imgA, imgB, current;
 
     function startSlideshow(data) {
+      stopMirror();
       playerManager.stop();
       idle.classList.add('hidden');
       slideshow.classList.add('active');
@@ -113,6 +120,84 @@
         else { clearInterval(slideTimer); slideTimer = null; log('슬라이드쇼 완료'); return; }
       }
       showSlide(slideIndex);
+    }
+
+    // ── 저지연 미러링 (fMP4 + MediaSource) ─────────────
+    // 폰이 { type:'mirror', url, mime } 를 보내면 그 주소를 열어두고
+    // 흘러오는 조각을 SourceBuffer에 그대로 넣는다. 플레이리스트도 조각 목록도 없다.
+    const mirror = document.getElementById('mirror');
+    const mirrorVideo = document.getElementById('mirrorVideo');
+    let mirrorAbort = null, mirrorTrim = null;
+
+    function stopMirror() {
+      if (mirrorAbort) { mirrorAbort.abort(); mirrorAbort = null; }
+      if (mirrorTrim) { clearInterval(mirrorTrim); mirrorTrim = null; }
+      mirrorVideo.removeAttribute('src');
+      mirrorVideo.load();
+      mirror.classList.remove('active');
+    }
+
+    async function startMirror(data) {
+      stopMirror();
+      playerManager.stop();
+      slideshow.classList.remove('active');
+      idle.classList.add('hidden');
+      mirror.classList.add('active');
+
+      const mime = data.mime || 'video/mp4; codecs="avc1.4D401F, mp4a.40.2"';
+      if (!MediaSource.isTypeSupported(mime)) { log('미지원 형식: ' + mime); return; }
+
+      const source = new MediaSource();
+      mirrorVideo.src = URL.createObjectURL(source);
+      // 소리를 같이 보내므로 음소거를 푼다. (자동재생 정책 때문에 muted로 시작한다)
+      mirrorVideo.muted = false;
+
+      await new Promise((resolve) => source.addEventListener('sourceopen', resolve, { once: true }));
+      const buffer = source.addSourceBuffer(mime);
+      // 조각의 시작 시각을 그대로 믿지 않고 이어 붙인다. 중간부터 받아도 재생된다.
+      buffer.mode = 'sequence';
+
+      const pending = [];
+      let appending = false;
+      function pump() {
+        if (appending || !pending.length || buffer.updating) return;
+        appending = true;
+        try { buffer.appendBuffer(pending.shift()); }
+        catch (e) { appending = false; log('append 실패: ' + e.message); }
+      }
+      buffer.addEventListener('updateend', () => { appending = false; pump(); });
+
+      // 오래된 구간을 버려야 메모리도, 지연도 늘지 않는다.
+      // 재생 위치가 라이브 엣지에서 밀리면 살짝 빨리 감아 따라붙는다.
+      mirrorTrim = setInterval(() => {
+        if (!buffer.updating && buffer.buffered.length) {
+          const end = buffer.buffered.end(buffer.buffered.length - 1);
+          const start = buffer.buffered.start(0);
+          if (end - start > 6) {
+            try { buffer.remove(start, end - 4); } catch (e) {}
+          }
+          const behind = end - mirrorVideo.currentTime;
+          if (behind > 2.0) { mirrorVideo.currentTime = end - 0.4; }
+          else if (behind > 0.9) { mirrorVideo.playbackRate = 1.1; }
+          else { mirrorVideo.playbackRate = 1.0; }
+        }
+      }, 700);
+
+      mirrorAbort = new AbortController();
+      log('미러링 연결 중…');
+      try {
+        const response = await fetch(data.url, { signal: mirrorAbort.signal });
+        const reader = response.body.getReader();
+        log('미러링 재생');
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          pending.push(value);
+          pump();
+        }
+      } catch (e) {
+        if (e.name !== 'AbortError') log('미러링 끊김: ' + e.message);
+      }
     }
 
     // ── 능력 보고 ──────────────────────────────────
@@ -155,6 +240,8 @@
       const data = event.data || {};
       log('메시지: ' + (data.type || '?'));
       if (data.type === 'probe') reportCapabilities();
+      else if (data.type === 'mirror') startMirror(data);
+      else if (data.type === 'stopMirror') { stopMirror(); idle.classList.remove('hidden'); }
       else if (data.type === 'slideshow') startSlideshow(data);
       else if (data.type === 'stopSlideshow') {
         if (slideTimer) clearInterval(slideTimer);
