@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>CastWave Receiver</title>
+  <title>CastSurf Receiver</title>
   <style>
     :root { color-scheme: dark; }
     html, body {
@@ -30,14 +30,16 @@
       color: #8b95a1; gap: 16px;
     }
     #idle.hidden { display: none; }
-    #idle .logo { font-size: 34px; font-weight: 800; letter-spacing: -1px;
-                  background: linear-gradient(90deg,#3f7de0,#2fa36b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    /* 앱 스플래시와 같은 조합: Cast는 밝은 회색, Surf는 파랑 */
+    #idle .logo { font-size: 44px; font-weight: 800; letter-spacing: -1.5px; }
+    #idle .logo .c { color: #e8ebee; }
+    #idle .logo .s { color: #3f7de0; }
     #status { position: fixed; left: 12px; bottom: 10px; font-size: 12px; color: #444; }
   </style>
 </head>
 <body>
   <div id="idle">
-    <div class="logo">CastWave</div>
+    <div class="logo"><span class="c">Cast</span><span class="s">Surf</span></div>
     <div>연결됨 · 재생 대기 중</div>
   </div>
 
