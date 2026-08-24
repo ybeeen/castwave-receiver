@@ -115,10 +115,47 @@
       showSlide(slideIndex);
     }
 
+    // ── 능력 보고 ──────────────────────────────────
+    // 저지연 미러링을 어떤 방식으로 보낼지 폰이 정하려면, 이 기기가
+    // MSE(Media Source Extensions)로 fMP4를 받아줄 수 있는지 알아야 한다.
+    // 동글마다 다르므로 추측하지 않고 기기가 직접 답하게 한다.
+    function capabilities() {
+      const codecs = [
+        'video/mp4; codecs="avc1.42E01E"',
+        'video/mp4; codecs="avc1.42E01E, mp4a.40.2"',
+        'video/mp4; codecs="avc1.4D401F, mp4a.40.2"',
+        'video/webm; codecs="vp8, vorbis"'
+      ];
+      const supported = {};
+      const hasMSE = typeof MediaSource !== 'undefined';
+      if (hasMSE) {
+        codecs.forEach((c) => { supported[c] = MediaSource.isTypeSupported(c); });
+      }
+      return {
+        type: 'capabilities',
+        mse: hasMSE,
+        sourceBuffer: typeof SourceBuffer !== 'undefined',
+        managedMediaSource: typeof ManagedMediaSource !== 'undefined',
+        webSocket: typeof WebSocket !== 'undefined',
+        fetchStream: typeof ReadableStream !== 'undefined',
+        webRTC: typeof RTCPeerConnection !== 'undefined',
+        codecs: supported,
+        userAgent: navigator.userAgent,
+        cafVersion: cast.framework.VERSION
+      };
+    }
+
+    function reportCapabilities() {
+      const payload = capabilities();
+      context.sendCustomMessage(NAMESPACE, undefined, payload);
+      log('능력 보고 전송 · MSE=' + payload.mse);
+    }
+
     context.addCustomMessageListener(NAMESPACE, (event) => {
       const data = event.data || {};
       log('메시지: ' + (data.type || '?'));
-      if (data.type === 'slideshow') startSlideshow(data);
+      if (data.type === 'probe') reportCapabilities();
+      else if (data.type === 'slideshow') startSlideshow(data);
       else if (data.type === 'stopSlideshow') {
         if (slideTimer) clearInterval(slideTimer);
         slideshow.classList.remove('active');
@@ -130,8 +167,12 @@
     options.customNamespaces = { [NAMESPACE]: cast.framework.system.MessageType.JSON };
     // 재생이 없어도 리시버가 바로 꺼지지 않게 한다 (슬라이드쇼·재연결 여유).
     options.maxInactivity = 3600;
+    // 폰이 붙자마자 한 번 알려준다. 폰이 물어보지 않아도 로그에 남는다.
+    context.addEventListener(cast.framework.system.EventType.SENDER_CONNECTED, () => {
+      setTimeout(reportCapabilities, 300);
+    });
     context.start(options);
-    log('CastWave 리시버 시작 · ' + cast.framework.VERSION);
+    log('CastSurf 리시버 시작 · ' + cast.framework.VERSION);
   </script>
 </body>
 </html>
