@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CastWave Receiver</title>
+  <style>
+    :root { color-scheme: dark; }
+    html, body {
+      margin: 0; padding: 0; width: 100%; height: 100%;
+      background: #000; overflow: hidden;
+      font-family: -apple-system, "Apple SD Gothic Neo", system-ui, sans-serif;
+    }
+    /* 기본 미디어(추출·파일 캐스팅)는 CAF가 이 요소로 재생한다 */
+    cast-media-player { --background-color: #000; }
+
+    /* 사진 슬라이드쇼: 두 장을 겹쳐두고 CSS로 크로스페이드 → 검은 화면 없이 전환 */
+    #slideshow { position: fixed; inset: 0; display: none; background: #000; }
+    #slideshow.active { display: block; }
+    #slideshow img {
+      position: absolute; inset: 0; margin: auto;
+      max-width: 100%; max-height: 100%;
+      opacity: 0; transition: opacity 0.8s ease;
+    }
+    #slideshow img.show { opacity: 1; }
+
+    #idle {
+      position: fixed; inset: 0; display: flex;
+      flex-direction: column; align-items: center; justify-content: center;
+      color: #8b95a1; gap: 16px;
+    }
+    #idle.hidden { display: none; }
+    #idle .logo { font-size: 34px; font-weight: 800; letter-spacing: -1px;
+                  background: linear-gradient(90deg,#3f7de0,#2fa36b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    #status { position: fixed; left: 12px; bottom: 10px; font-size: 12px; color: #444; }
+  </style>
+</head>
+<body>
+  <div id="idle">
+    <div class="logo">CastWave</div>
+    <div>연결됨 · 재생 대기 중</div>
+  </div>
+
+  <cast-media-player></cast-media-player>
+  <div id="slideshow"></div>
+  <div id="status"></div>
+
+  <script src="//www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+  <script>
+    // 앱과 주고받는 전용 채널. 폰 쪽 코드의 네임스페이스와 반드시 같아야 한다.
+    const NAMESPACE = 'urn:x-cast:com.castwave';
+
+    const context = cast.framework.CastReceiverContext.getInstance();
+    const idle = document.getElementById('idle');
+    const slideshow = document.getElementById('slideshow');
+    const statusEl = document.getElementById('status');
+    function log(msg) { statusEl.textContent = msg; }
+
+    // ── 기본 미디어 재생 (추출·파일 캐스팅) ─────────────
+    const playerManager = context.getPlayerManager();
+    playerManager.addEventListener(
+      cast.framework.events.EventType.PLAYER_LOAD_COMPLETE,
+      () => { idle.classList.add('hidden'); slideshow.classList.remove('active'); log('재생 중'); }
+    );
+    playerManager.addEventListener(
+      cast.framework.events.EventType.MEDIA_FINISHED,
+      () => { idle.classList.remove('hidden'); log('대기'); }
+    );
+
+    // ── 사진 슬라이드쇼 (커스텀 채널) ──────────────────
+    // 폰이 { type:'slideshow', urls:[...], seconds:5, loop:true } 를 보낸다.
+    let slideTimer = null, slideIndex = 0, slideUrls = [], slideSeconds = 5, slideLoop = false;
+    let imgA, imgB, current;
+
+    function startSlideshow(data) {
+      playerManager.stop();
+      idle.classList.add('hidden');
+      slideshow.classList.add('active');
+      slideshow.innerHTML = '';
+      imgA = document.createElement('img');
+      imgB = document.createElement('img');
+      slideshow.append(imgA, imgB);
+      current = imgA;
+
+      slideUrls = data.urls || [];
+      slideSeconds = data.seconds || 5;
+      slideLoop = !!data.loop;
+      slideIndex = 0;
+      if (slideTimer) clearInterval(slideTimer);
+      if (!slideUrls.length) return;
+
+      showSlide(0);
+      slideTimer = setInterval(nextSlide, slideSeconds * 1000);
+      log('슬라이드쇼 ' + slideUrls.length + '장');
+    }
+
+    function showSlide(i) {
+      const next = (current === imgA) ? imgB : imgA;
+      next.onload = () => {
+        next.classList.add('show');
+        current.classList.remove('show');
+        current = next;
+      };
+      next.src = slideUrls[i];
+    }
+
+    function nextSlide() {
+      slideIndex++;
+      if (slideIndex >= slideUrls.length) {
+        if (slideLoop) { slideIndex = 0; }
+        else { clearInterval(slideTimer); slideTimer = null; log('슬라이드쇼 완료'); return; }
+      }
+      showSlide(slideIndex);
+    }
+
+    context.addCustomMessageListener(NAMESPACE, (event) => {
+      const data = event.data || {};
+      log('메시지: ' + (data.type || '?'));
+      if (data.type === 'slideshow') startSlideshow(data);
+      else if (data.type === 'stopSlideshow') {
+        if (slideTimer) clearInterval(slideTimer);
+        slideshow.classList.remove('active');
+        idle.classList.remove('hidden');
+      }
+    });
+
+    const options = new cast.framework.CastReceiverOptions();
+    options.customNamespaces = { [NAMESPACE]: cast.framework.system.MessageType.JSON };
+    // 재생이 없어도 리시버가 바로 꺼지지 않게 한다 (슬라이드쇼·재연결 여유).
+    options.maxInactivity = 3600;
+    context.start(options);
+    log('CastWave 리시버 시작 · ' + cast.framework.VERSION);
+  </script>
+</body>
+</html>
