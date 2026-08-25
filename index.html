@@ -68,7 +68,53 @@
     const playerManager = context.getPlayerManager();
     playerManager.addEventListener(
       cast.framework.events.EventType.PLAYER_LOAD_COMPLETE,
-      () => { idle.classList.add('hidden'); slideshow.classList.remove('active'); log('재생 중'); }
+      () => {
+        // 미러링 화면이 위에 남아 있으면 일반 재생을 덮어버린다.
+        stopMirror();
+        idle.classList.add('hidden');
+        slideshow.classList.remove('active');
+        log('재생 중');
+      }
+    );
+
+    // 재생이 실패하면 리시버만 이유를 안다. 폰은 idle(error)까지밖에 못 본다.
+    // 무엇이 왜 실패했는지 그대로 돌려보내 로그에 남긴다.
+    function reportError(where, detail) {
+      log('오류: ' + where);
+      try {
+        context.sendCustomMessage(NAMESPACE, undefined, {
+          type: 'error', where: where, detail: detail
+        });
+      } catch (e) {}
+    }
+
+    playerManager.addEventListener(cast.framework.events.EventType.ERROR, (event) => {
+      reportError('player', {
+        detailedErrorCode: event.detailedErrorCode,
+        reason: event.reason,
+        error: event.error && String(event.error)
+      });
+    });
+
+    playerManager.addEventListener(cast.framework.events.EventType.LOAD_ABORT, (event) => {
+      reportError('loadAbort', { reason: event.reason });
+    });
+
+    playerManager.setMessageInterceptor(
+      cast.framework.messages.MessageType.LOAD,
+      (request) => {
+        const media = request.media || {};
+        log('로드 요청: ' + (media.contentType || '?'));
+        try {
+          context.sendCustomMessage(NAMESPACE, undefined, {
+            type: 'loadRequest',
+            contentId: media.contentId || media.contentUrl,
+            contentType: media.contentType,
+            streamType: media.streamType
+          });
+        } catch (e) {}
+        return request;
+      }
     );
     playerManager.addEventListener(
       cast.framework.events.EventType.MEDIA_FINISHED,
