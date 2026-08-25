@@ -76,10 +76,11 @@
     // 기능 하나가 깨졌다고 연결 자체가 막히면 안 된다. (실제로 그렇게 두 번 막혔다.)
     const options = new cast.framework.CastReceiverOptions();
     options.customNamespaces = { [NAMESPACE]: cast.framework.system.MessageType.JSON };
-    // 재생이 없어도 바로 꺼지지 않게 여유를 준다 (슬라이드쇼 전환·짧은 재연결).
-    // 너무 길게 잡으면 발신자가 떠난 뒤에도 리시버가 계속 살아남아,
-    // 다음 연결이 그 좀비에 막혀 60초 타임아웃으로 실패한다.
-    options.maxInactivity = 300;
+    // 무활동 타이머는 CAF 미디어 플레이어의 재생만 활동으로 친다.
+    // 미러링은 그 플레이어를 거치지 않고 자체 <video>로 재생하므로,
+    // 이 값을 짧게 잡으면 화면 공유가 멀쩡히 돌던 중에 시간이 차서 끊긴다.
+    // 대신 좀비로 남지 않도록 마지막 발신자가 떠날 때 스스로 끈다(아래 참고).
+    options.maxInactivity = 3600;
     // 폰이 붙자마자 한 번 알려준다. 폰이 물어보지 않아도 로그에 남는다.
     context.addEventListener(cast.framework.system.EventType.SENDER_CONNECTED, () => {
       setTimeout(reportCapabilities, 300);
@@ -92,7 +93,18 @@
       if (slideTimer) { clearInterval(slideTimer); slideTimer = null; }
       slideshow.classList.remove('active');
       idle.classList.remove('hidden');
-      log('연결 해제됨');
+
+      // 마지막 발신자가 떠났으면 스스로 끈다.
+      // 남겨두면 다음 연결이 그 좀비에 막혀 60초 타임아웃으로 실패한다.
+      // 무활동 시간으로 재는 대신 이렇게 끊는 편이 확실하고, 화면 공유를 끊지도 않는다.
+      let remaining = 0;
+      try { remaining = context.getSenders().length; } catch (e) {}
+      if (remaining === 0) {
+        log('발신자 없음 → 리시버 종료');
+        setTimeout(() => { try { context.stop(); } catch (e) {} }, 1000);
+      } else {
+        log('연결 해제됨 (남은 발신자 ' + remaining + ')');
+      }
     });
 
     context.start(options);
