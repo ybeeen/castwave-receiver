@@ -11,11 +11,13 @@
       background: #000; overflow: hidden;
       font-family: -apple-system, "Apple SD Gothic Neo", system-ui, sans-serif;
     }
-    /* 기본 미디어(추출·파일 캐스팅)는 CAF가 이 요소로 재생한다 */
-    cast-media-player { --background-color: #000; }
+    /* 기본 미디어(추출·파일 캐스팅)는 CAF가 이 요소로 재생한다.
+       재생할 것이 없을 때도 이 요소가 자기 기본 화면(검은 배경 + 앱 이름)을 그린다.
+       그대로 두면 우리 대기 화면을 덮어버리므로 층을 아래로 내린다. */
+    cast-media-player { --background-color: #000; position: fixed; inset: 0; z-index: 1; }
 
     /* 사진 슬라이드쇼: 두 장을 겹쳐두고 CSS로 크로스페이드 → 검은 화면 없이 전환 */
-    #slideshow { position: fixed; inset: 0; display: none; background: #000; }
+    #slideshow { position: fixed; inset: 0; z-index: 20; display: none; background: #000; }
     #slideshow.active { display: block; }
     #slideshow img {
       position: absolute; inset: 0; margin: auto;
@@ -25,12 +27,13 @@
     #slideshow img.show { opacity: 1; }
 
     /* 저지연 미러링: fMP4 조각을 MediaSource로 직접 받아 그린다 */
-    #mirror { position: fixed; inset: 0; display: none; background: #000; }
+    #mirror { position: fixed; inset: 0; z-index: 20; display: none; background: #000; }
     #mirror.active { display: block; }
     #mirror video { width: 100%; height: 100%; object-fit: contain; background: #000; }
 
     #idle {
-      position: fixed; inset: 0; display: flex;
+      position: fixed; inset: 0; z-index: 10; background: #000;
+      display: flex;
       flex-direction: column; align-items: center; justify-content: center;
       color: #8b95a1; gap: 20px;
     }
@@ -67,7 +70,7 @@
     // 이 페이지의 판. 리시버를 고쳐 배포할 때마다 올린다.
     // Chromecast가 캐시된 옛 페이지를 들고 있으면 고친 것이 반영되지 않는데,
     // 겉으로는 구분이 안 돼 원인을 엉뚱한 데서 찾게 된다. 앱이 이 값을 로그에 남긴다.
-    const BUILD = '2026-08-28.3';
+    const BUILD = '2026-08-28.4';
 
     const context = cast.framework.CastReceiverContext.getInstance();
     const idle = document.getElementById('idle');
