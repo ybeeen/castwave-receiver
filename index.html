@@ -70,7 +70,7 @@
     // 이 페이지의 판. 리시버를 고쳐 배포할 때마다 올린다.
     // Chromecast가 캐시된 옛 페이지를 들고 있으면 고친 것이 반영되지 않는데,
     // 겉으로는 구분이 안 돼 원인을 엉뚱한 데서 찾게 된다. 앱이 이 값을 로그에 남긴다.
-    const BUILD = '2026-08-28.5';
+    const BUILD = '2026-08-28.6';
 
     const context = cast.framework.CastReceiverContext.getInstance();
     const idle = document.getElementById('idle');
@@ -296,6 +296,18 @@
       }
       buffer.addEventListener('updateend', () => { appending = false; pump(); });
 
+      // 재생이 멎었는지 지켜본다. 리시버 안에서 멈추면 폰은 알 길이 없다.
+      let lastTime = -1, stalledFor = 0;
+
+      mirrorVideo.onerror = () => {
+        reportError('mirrorVideo', {
+          code: mirrorVideo.error && mirrorVideo.error.code,
+          message: mirrorVideo.error && mirrorVideo.error.message
+        });
+      };
+      source.addEventListener('sourceended', () => reportError('sourceEnded', {}));
+      buffer.addEventListener('error', () => reportError('sourceBuffer', {}));
+
       // 오래된 구간을 버려야 메모리도, 지연도 늘지 않는다.
       // 재생 위치가 라이브 엣지에서 밀리면 살짝 빨리 감아 따라붙는다.
       mirrorTrim = setInterval(() => {
@@ -311,6 +323,27 @@
           if (behind > 2.0) { mirrorVideo.currentTime = end - 0.4; }
           else if (behind > 0.9) { mirrorVideo.playbackRate = 1.1; }
           else { mirrorVideo.playbackRate = 1.0; }
+
+          // 받을 것은 쌓이는데 재생 위치가 안 움직이면 멎은 것이다.
+          // 그대로 두면 화면이 얼어붙은 채 아무 일도 일어나지 않는다.
+          if (mirrorVideo.currentTime === lastTime && end > mirrorVideo.currentTime + 0.5) {
+            stalledFor += 0.7;
+            if (stalledFor >= 2.1) {
+              stalledFor = 0;
+              log('재생이 멎음 → 되살리기');
+              reportError('stalled', {
+                readyState: mirrorVideo.readyState,
+                paused: mirrorVideo.paused,
+                currentTime: Math.round(mirrorVideo.currentTime * 10) / 10,
+                bufferedEnd: Math.round(end * 10) / 10
+              });
+              try { mirrorVideo.currentTime = end - 0.3; } catch (e) {}
+              mirrorVideo.play().catch(() => {});
+            }
+          } else {
+            stalledFor = 0;
+          }
+          lastTime = mirrorVideo.currentTime;
         } catch (e) {
           clearInterval(mirrorTrim);
           mirrorTrim = null;
@@ -330,9 +363,13 @@
           pump();
         }
       } catch (e) {
-        if (e.name !== 'AbortError') log('미러링 끊김: ' + e.message);
+        if (e.name !== 'AbortError') {
+          log('미러링 끊김: ' + e.message);
+          reportError('mirrorStream', { message: String(e && e.message) });
+        }
       }
 
+      reportError('mirrorEnded', {});
       // 스트림이 끝났다. 폰이 이미 떠났다면 이제 리시버를 붙잡아둘 이유가 없다.
       mirror.classList.remove('active');
       idle.classList.remove('hidden');
