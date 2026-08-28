@@ -34,10 +34,10 @@
       flex-direction: column; align-items: center; justify-content: center;
       color: #8b95a1; gap: 20px;
     }
-    /* TV는 멀리서 본다. 마크를 넉넉히 키우고 은은한 빛무리를 깔아 검은 화면에서 뜨게 한다. */
+    /* TV는 멀리서 본다. 그림을 넉넉히 키운다. 가로로 긴 그림이라 폭 기준으로 잡는다. */
     #idle .mark {
-      width: min(38vw, 420px); height: auto;
-      filter: drop-shadow(0 0 40px rgba(63,125,224,0.35));
+      width: min(62vw, 760px); height: auto;
+      filter: drop-shadow(0 18px 40px rgba(0,0,0,0.55));
     }
     #idle.hidden { display: none; }
     /* 앱 스플래시와 같은 조합: Cast는 밝은 회색, Surf는 파랑 */
@@ -49,7 +49,7 @@
 </head>
 <body>
   <div id="idle">
-    <img class="mark" src="castsurf-mark.png" alt="">
+    <img class="mark" src="castsurf-cast.png" alt="">
     <div class="logo"><span class="c">Cast</span><span class="s">Surf</span></div>
     <div>연결됨 · 재생 대기 중</div>
   </div>
@@ -67,7 +67,7 @@
     // 이 페이지의 판. 리시버를 고쳐 배포할 때마다 올린다.
     // Chromecast가 캐시된 옛 페이지를 들고 있으면 고친 것이 반영되지 않는데,
     // 겉으로는 구분이 안 돼 원인을 엉뚱한 데서 찾게 된다. 앱이 이 값을 로그에 남긴다.
-    const BUILD = '2026-08-28.2';
+    const BUILD = '2026-08-28.3';
 
     const context = cast.framework.CastReceiverContext.getInstance();
     const idle = document.getElementById('idle');
