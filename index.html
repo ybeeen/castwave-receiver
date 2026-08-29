@@ -19,12 +19,13 @@
     /* 사진 슬라이드쇼: 두 장을 겹쳐두고 CSS로 크로스페이드 → 검은 화면 없이 전환 */
     #slideshow { position: fixed; inset: 0; z-index: 20; display: none; background: #000; }
     #slideshow.active { display: block; }
-    #slideshow img {
+    #slideshow img, #slideshow video {
       position: absolute; inset: 0; margin: auto;
       max-width: 100%; max-height: 100%;
       opacity: 0; transition: opacity 0.8s ease;
     }
-    #slideshow img.show { opacity: 1; }
+    #slideshow img.show, #slideshow video.show { opacity: 1; }
+    #slideshow video { width: 100%; height: 100%; object-fit: contain; }
 
     /* 저지연 미러링: fMP4 조각을 MediaSource로 직접 받아 그린다 */
     #mirror { position: fixed; inset: 0; z-index: 20; display: none; background: #000; }
@@ -70,7 +71,7 @@
     // 이 페이지의 판. 리시버를 고쳐 배포할 때마다 올린다.
     // Chromecast가 캐시된 옛 페이지를 들고 있으면 고친 것이 반영되지 않는데,
     // 겉으로는 구분이 안 돼 원인을 엉뚱한 데서 찾게 된다. 앱이 이 값을 로그에 남긴다.
-    const BUILD = '2026-08-28.6';
+    const BUILD = '2026-08-29.1';
 
     const context = cast.framework.CastReceiverContext.getInstance();
     const idle = document.getElementById('idle');
@@ -127,8 +128,7 @@
 
     context.addEventListener(cast.framework.system.EventType.SENDER_DISCONNECTED, () => {
       // 미러링은 건드리지 않는다. 발신자가 끊겼다고 화면 공유가 끝난 것은 아니다.
-      if (slideTimer) { clearInterval(slideTimer); slideTimer = null; }
-      slideshow.classList.remove('active');
+      stopSlideshow();
       if (!mirror.classList.contains('active')) idle.classList.remove('hidden');
 
       stopIfNobodyNeedsUs('연결 해제됨');
@@ -204,49 +204,108 @@
       () => { idle.classList.remove('hidden'); log('대기'); }
     );
 
-    // ── 사진 슬라이드쇼 (커스텀 채널) ──────────────────
-    // 폰이 { type:'slideshow', urls:[...], seconds:5, loop:true } 를 보낸다.
-    let slideTimer = null, slideIndex = 0, slideUrls = [], slideSeconds = 5, slideLoop = false;
-    let imgA, imgB, current;
+    // ── 재생목록: 사진 + 영상 (커스텀 채널) ──────────────
+    // 폰이 { type:'slideshow', items:[{url,mime}], seconds:5, loop:true } 를 보낸다.
+    //
+    // CAF 큐로 보내면 항목이 바뀔 때마다 플레이어가 비워져 사이에 대기 화면이 낀다.
+    // 여기서는 사진 두 장과 영상 하나를 겹쳐두고 투명도만 바꿔 이어 붙인다.
+    let slideItems = [], slideIndex = 0, slideSeconds = 5, slideLoop = false;
+    let slideTimer = null;
+    let imgA, imgB, slideVideo, currentLayer;
+
+    function isPhoto(item) {
+      return !item.mime || item.mime.indexOf('image/') === 0;
+    }
+
+    function clearSlideTimer() {
+      if (slideTimer) { clearTimeout(slideTimer); slideTimer = null; }
+    }
+
+    function stopSlideshow() {
+      clearSlideTimer();
+      if (slideVideo) { try { slideVideo.pause(); } catch (e) {} slideVideo.removeAttribute('src'); }
+      slideshow.classList.remove('active');
+      slideItems = [];
+    }
 
     function startSlideshow(data) {
       stopMirror();
+      stopSlideshow();
       playerManager.stop();
       idle.classList.add('hidden');
       slideshow.classList.add('active');
       slideshow.innerHTML = '';
+
       imgA = document.createElement('img');
       imgB = document.createElement('img');
-      slideshow.append(imgA, imgB);
-      current = imgA;
+      slideVideo = document.createElement('video');
+      slideVideo.playsInline = true;
+      slideVideo.addEventListener('ended', () => nextSlide());
+      slideVideo.addEventListener('error', () => {
+        reportError('playlistVideo', {
+          index: slideIndex,
+          code: slideVideo.error && slideVideo.error.code
+        });
+        nextSlide();   // 한 편이 안 되더라도 재생목록 전체가 멈추면 안 된다
+      });
+      slideshow.append(imgA, imgB, slideVideo);
+      currentLayer = imgB;
 
-      slideUrls = data.urls || [];
+      // 예전 형식({urls:[...]})도 받아준다.
+      slideItems = data.items || (data.urls || []).map((url) => ({ url: url, mime: 'image/*' }));
       slideSeconds = data.seconds || 5;
       slideLoop = !!data.loop;
       slideIndex = 0;
-      if (slideTimer) clearInterval(slideTimer);
-      if (!slideUrls.length) return;
+      if (!slideItems.length) return;
 
       showSlide(0);
-      slideTimer = setInterval(nextSlide, slideSeconds * 1000);
-      log('슬라이드쇼 ' + slideUrls.length + '장');
+      log('재생목록 ' + slideItems.length + '개');
+    }
+
+    function showLayer(next) {
+      next.classList.add('show');
+      if (currentLayer && currentLayer !== next) currentLayer.classList.remove('show');
+      currentLayer = next;
     }
 
     function showSlide(i) {
-      const next = (current === imgA) ? imgB : imgA;
-      next.onload = () => {
-        next.classList.add('show');
-        current.classList.remove('show');
-        current = next;
-      };
-      next.src = slideUrls[i];
+      clearSlideTimer();
+      const item = slideItems[i];
+      if (!item) return;
+
+      if (isPhoto(item)) {
+        try { slideVideo.pause(); } catch (e) {}
+        const next = (currentLayer === imgA) ? imgB : imgA;
+        next.onload = () => {
+          showLayer(next);
+          // 다음 장은 미리 받아둔다. 넘어갈 때 비어 보이지 않는다.
+          const upcoming = slideItems[i + 1];
+          if (upcoming && isPhoto(upcoming)) { new Image().src = upcoming.url; }
+        };
+        next.src = item.url;
+        slideTimer = setTimeout(nextSlide, slideSeconds * 1000);
+      } else {
+        slideVideo.src = item.url;
+        slideVideo.currentTime = 0;
+        const play = slideVideo.play();
+        if (play && play.catch) play.catch(() => {});
+        showLayer(slideVideo);
+        // 영상은 끝나면 'ended'로 넘어간다. 시간으로 자르지 않는다.
+      }
     }
 
     function nextSlide() {
       slideIndex++;
-      if (slideIndex >= slideUrls.length) {
-        if (slideLoop) { slideIndex = 0; }
-        else { clearInterval(slideTimer); slideTimer = null; log('슬라이드쇼 완료'); return; }
+      if (slideIndex >= slideItems.length) {
+        if (slideLoop) {
+          slideIndex = 0;
+        } else {
+          clearSlideTimer();
+          slideshow.classList.remove('active');
+          idle.classList.remove('hidden');
+          log('재생목록 완료');
+          return;
+        }
       }
       showSlide(slideIndex);
     }
@@ -423,8 +482,7 @@
       else if (data.type === 'stopMirror') { stopMirror(); idle.classList.remove('hidden'); }
       else if (data.type === 'slideshow') startSlideshow(data);
       else if (data.type === 'stopSlideshow') {
-        if (slideTimer) clearInterval(slideTimer);
-        slideshow.classList.remove('active');
+        stopSlideshow();
         idle.classList.remove('hidden');
       }
     });
