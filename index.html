@@ -71,7 +71,7 @@
     // 이 페이지의 판. 리시버를 고쳐 배포할 때마다 올린다.
     // Chromecast가 캐시된 옛 페이지를 들고 있으면 고친 것이 반영되지 않는데,
     // 겉으로는 구분이 안 돼 원인을 엉뚱한 데서 찾게 된다. 앱이 이 값을 로그에 남긴다.
-    const BUILD = '2026-08-29.1';
+    const BUILD = '2026-08-30.1';
 
     const context = cast.framework.CastReceiverContext.getInstance();
     const idle = document.getElementById('idle');
@@ -153,6 +153,20 @@
 
     // 재생이 실패하면 리시버만 이유를 안다. 폰은 idle(error)까지밖에 못 본다.
     // 무엇이 왜 실패했는지 그대로 돌려보내 로그에 남긴다.
+    /// 오류 객체는 그냥 보내면 '[object Object]'가 되어 아무 정보가 없다.
+    /// 담긴 값들을 꺼내 문자열로 만든다.
+    function describe(value) {
+      if (value === null || value === undefined) return String(value);
+      if (typeof value !== 'object') return String(value);
+      const out = {};
+      for (const key of Object.getOwnPropertyNames(value)) {
+        const v = value[key];
+        if (typeof v === 'function' || typeof v === 'object') continue;
+        out[key] = v;
+      }
+      try { return JSON.stringify(out); } catch (e) { return String(value); }
+    }
+
     function reportError(where, detail) {
       log('오류: ' + where);
       try {
@@ -179,7 +193,9 @@
       reportError('player', {
         detailedErrorCode: event.detailedErrorCode,
         reason: event.reason,
-        error: event.error && String(event.error)
+        error: describe(event.error),
+        // 어떤 요청에서 터졌는지가 원인을 가른다.
+        url: (event.error && (event.error.uri || event.error.url)) || undefined
       });
     });
 
