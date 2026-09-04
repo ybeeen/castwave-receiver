@@ -71,7 +71,7 @@
     // 이 페이지의 판. 리시버를 고쳐 배포할 때마다 올린다.
     // Chromecast가 캐시된 옛 페이지를 들고 있으면 고친 것이 반영되지 않는데,
     // 겉으로는 구분이 안 돼 원인을 엉뚱한 데서 찾게 된다. 앱이 이 값을 로그에 남긴다.
-    const BUILD = '2026-08-30.2';
+    const BUILD = '2026-09-04.1';
 
     const context = cast.framework.CastReceiverContext.getInstance();
     const idle = document.getElementById('idle');
@@ -87,6 +87,73 @@
 
     // ── 기본 미디어 재생 (추출·파일 캐스팅) ─────────────
     const playerManager = context.getPlayerManager();
+
+    // 라이브는 조각 창이 10초밖에 안 되는 곳이 많다. 기본값으로 두면 끝단에 바짝 붙어
+    // 재생하다가 다음 조각을 기다리며 계속 멈칫거린다. 조금 물러서서 넉넉히 쌓고 튼다.
+    try {
+      const playbackConfig = new cast.framework.PlaybackConfig();
+      // 버퍼가 마르면 잠깐 멈췄다가, 이만큼 쌓이면 다시 튼다.
+      playbackConfig.autoPauseDuration = 1;
+      playbackConfig.autoResumeDuration = 6;
+      playbackConfig.autoResumeNumberOfSegments = 2;
+      playbackConfig.shakaConfig = {
+        streaming: {
+          // 목표만큼 앞서 받아둔다. 다시 채울 때 기준도 함께 올린다.
+          bufferingGoal: 20,
+          rebufferingGoal: 5,
+          bufferBehind: 30,
+          // 조각 하나가 실패해도 바로 포기하지 않는다.
+          retryParameters: { maxAttempts: 4, baseDelay: 300, backoffFactor: 1.5 }
+        },
+        manifest: {
+          // 라이브 끝단에서 세 조각 물러서서 시작한다.
+          defaultPresentationDelay: 6
+        }
+      };
+      playerManager.setPlaybackConfig(playbackConfig);
+      log('재생 설정 적용 · 버퍼 목표 20초');
+    } catch (e) {
+      log('재생 설정 실패: ' + e);
+    }
+
+    // 재생이 왜 멈칫거리는지는 버퍼가 얼마나 쌓였는지를 봐야 안다.
+    // 상태가 바뀔 때가 아니라 주기적으로 보내야 흐름이 보인다.
+    let bufferReportTimer = null;
+    function bufferSnapshot() {
+      const media = document.querySelector('video, audio')
+        || document.getElementById('mirrorVideo');
+      if (!media) return null;
+      let ahead = 0;
+      try {
+        const ranges = media.buffered;
+        for (let i = 0; i < ranges.length; i++) {
+          if (media.currentTime >= ranges.start(i) - 0.5 && media.currentTime <= ranges.end(i)) {
+            ahead = ranges.end(i) - media.currentTime;
+          }
+        }
+      } catch (e) {}
+      return {
+        type: 'playback',
+        state: playerManager.getPlayerState(),
+        position: Math.round(media.currentTime * 10) / 10,
+        ahead: Math.round(ahead * 10) / 10,
+        ranges: media.buffered ? media.buffered.length : -1,
+        readyState: media.readyState,
+        stalled: media.readyState < 3
+      };
+    }
+
+    function startBufferReports() {
+      if (bufferReportTimer) return;
+      bufferReportTimer = setInterval(() => {
+        const snapshot = bufferSnapshot();
+        if (snapshot) context.sendCustomMessage(NAMESPACE, undefined, snapshot);
+      }, 2000);
+    }
+
+    function stopBufferReports() {
+      if (bufferReportTimer) { clearInterval(bufferReportTimer); bufferReportTimer = null; }
+    }
     playerManager.addEventListener(
       cast.framework.events.EventType.PLAYER_LOAD_COMPLETE,
       () => {
@@ -94,6 +161,7 @@
         stopMirror();
         idle.classList.add('hidden');
         slideshow.classList.remove('active');
+        startBufferReports();
         log('재생 중');
       }
     );
@@ -511,6 +579,7 @@
       stopSlideshow();
       if (!mirror.classList.contains('active')) idle.classList.remove('hidden');
 
+      stopBufferReports();
       stopIfNobodyNeedsUs('연결 해제됨');
     });
 
